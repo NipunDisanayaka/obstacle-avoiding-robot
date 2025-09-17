@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Robot Path + Control</title>
+  <style>
+    body { font-family: Arial; display: flex; }
+    #mapCanvas { border:1px solid black; background:white; }
+    #controls { margin-left: 20px; }
+    button { padding: 10px 20px; margin: 5px; font-size: 16px; }
+    button:active { background:#ddd; }
+  </style>
+</head>
+<body>
+  <div>
+    <h2>Robot Path Mapping (100cm)</h2>
+    <button onclick="resetMap()">New Map</button><br><br>
+    <canvas id="mapCanvas" width="800" height="400"></canvas>
+  </div>
+
+  <div id="controls">
+    <h2>Controls</h2>
+    <button id="fwd">Forward</button><br>
+    <button id="left">Left</button>
+    <button id="right">Right</button><br>
+    <button id="back">Backward</button><br>
+    <button id="stop">Stop</button>
+  </div>
+
+<script>
+const ESP32_IP = "http://10.233.200.208"; // change to your ESP32 IP
+const canvas = document.getElementById("mapCanvas");
+const ctx = canvas.getContext("2d");
+
+const scale = canvas.width / 100; // 100 cm mapped to canvas width
+const yCenter = canvas.height/2;
+
+function resetMap() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.beginPath();
+}
+
+function sendCmd(cmd) {
+  fetch(`${ESP32_IP}/control?cmd=${cmd}`, { mode:"cors" })
+    .catch(err => console.log(err));
+}
+
+// ===== Button press + release logic =====
+function bindButton(id, cmd) {
+  const btn = document.getElementById(id);
+  btn.addEventListener("mousedown", () => sendCmd(cmd));
+  btn.addEventListener("mouseup", () => sendCmd("stop"));
+  btn.addEventListener("touchstart", () => sendCmd(cmd));
+  btn.addEventListener("touchend", () => sendCmd("stop"));
+}
+
+bindButton("fwd", "forward");
+bindButton("back", "backward");
+bindButton("left", "left");
+bindButton("right", "right");
+document.getElementById("stop").onclick = () => sendCmd("stop");
+
+// ===== Fetch sensor data and draw =====
+function fetchData() {
+  fetch(`${ESP32_IP}/data`, { mode:"cors" })
+    .then(res => res.json())
+    .then(d => {
+      let x = d.x * scale;
+      let y = yCenter;
+
+      // robot path
+      ctx.fillStyle = "blue";
+      ctx.fillRect(x, y, 3, 3);
+
+      // obstacle (to right)
+      let obsX = x;
+      let obsY = y - d.right_dist;
+      ctx.fillStyle = "red";
+      ctx.fillRect(obsX, obsY, 3, 3);
+    })
+    .catch(err => console.log(err));
+}
+
+setInterval(fetchData, 1000);
+</script>
+</body>
+</html>
