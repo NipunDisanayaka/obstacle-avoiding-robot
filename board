@@ -1,0 +1,156 @@
+#include <WiFi.h>
+#include <WebServer.h>
+
+// ===== WiFi Config =====
+const char* ssid = "wifiname"; 
+const char* password = "password"; 
+
+// ===== Motor Driver Pins (L298N) =====
+#define IN1 14
+#define IN2 27
+#define IN3 26
+#define IN4 25
+#define IN5 32
+#define IN6 33
+#define IN7 23
+#define IN8 22
+
+// ===== Ultrasonic Sensor =====
+#define TRIG_PIN 5
+#define ECHO_PIN 18
+
+WebServer server(80);
+
+// ===== Motion State =====
+String motion = "stop";
+unsigned long lastUpdate = 0;
+float x_position = 0;       // cm forward
+const float max_map = 100;  // map length (cm)
+float speed_cmps = 1.0;     // 1 cm/s
+
+// ===== Motor Control =====
+void stopMotors() {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
+  digitalWrite(IN5, LOW); digitalWrite(IN6, LOW);
+  digitalWrite(IN7, LOW); digitalWrite(IN8, LOW);
+}
+
+void forward() {
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+  digitalWrite(IN5, HIGH); digitalWrite(IN6, LOW);
+  digitalWrite(IN7, HIGH); digitalWrite(IN8, LOW);
+}
+
+void backward() {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
+  digitalWrite(IN5, LOW); digitalWrite(IN6, HIGH);
+  digitalWrite(IN7, LOW); digitalWrite(IN8, HIGH);
+}
+
+void left() {
+  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
+  digitalWrite(IN5, HIGH); digitalWrite(IN6, LOW);
+  digitalWrite(IN7, HIGH); digitalWrite(IN8, LOW);
+}
+
+void right() {
+  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
+  digitalWrite(IN5, LOW); digitalWrite(IN6, HIGH);
+  digitalWrite(IN7, LOW); digitalWrite(IN8, HIGH);
+}
+
+// ===== Ultrasonic =====
+float getDistance() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 20000);
+  float distance = duration * 0.034 / 2;
+
+  if (distance <= 0 || distance > 200) distance = 200;
+  return distance;
+}
+
+// ===== Control Handler =====
+void handleControl() {
+  if (server.method() == HTTP_OPTIONS) {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+    server.send(204);
+    return;
+  }
+
+  String cmd = server.arg("cmd");
+  Serial.println("Received: " + cmd);
+
+  if (cmd == "forward") { forward(); motion = "forward"; }
+  else if (cmd == "backward") { backward(); motion = "backward"; }
+  else if (cmd == "left") { left(); motion = "left"; }
+  else if (cmd == "right") { right(); motion = "right"; }
+  else { stopMotors(); motion = "stop"; }
+
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "text/plain", "OK");
+}
+
+// ===== Data Handler =====
+void handleData() {
+  unsigned long now = millis();
+  if (motion == "forward" && now - lastUpdate >= 1000) {
+    x_position += speed_cmps;  // 1 cm per sec
+    if (x_position > max_map) x_position = max_map;
+    lastUpdate = now;
+  }
+
+  float dist = getDistance();
+
+  String json = "{\"x\":" + String(x_position, 1) +
+                ",\"y\":0,\"right_dist\":" + String(dist, 1) + "}";
+
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "application/json", json);
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+  pinMode(IN5, OUTPUT); pinMode(IN6, OUTPUT);
+  pinMode(IN7, OUTPUT); pinMode(IN8, OUTPUT);
+  stopMotors();
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.println("\nConnected!");
+  Serial.println(WiFi.localIP());
+
+  server.on("/control", handleControl);
+  server.on("/data", handleData);
+  server.onNotFound([]() {
+    if (server.method() == HTTP_OPTIONS) {
+      server.sendHeader("Access-Control-Allow-Origin", "*");
+      server.send(204);
+    } else {
+      server.send(404, "text/plain", "Not found");
+    }
+  });
+
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+}
